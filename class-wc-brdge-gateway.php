@@ -50,6 +50,13 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 	protected string $api_endpoint;
 
 	/**
+	 * Integration method (hosted_fields or hosted_page).
+	 *
+	 * @var string
+	 */
+	protected string $integration_method;
+
+	/**
 	 * WC_BRDge_Gateway constructor.
 	 */
 	public function __construct() {
@@ -62,13 +69,17 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 		$this->init_form_fields();
 		$this->init_settings();
 
-		$this->title          = $this->get_option( 'title' );
-		$this->description    = $this->get_option( 'description' );
-		$this->enabled        = $this->get_option( 'enabled' );
-		$this->testmode       = ( 'yes' === $this->get_option( 'testmode' ) );
-		$this->server_api_key = $this->testmode ? $this->get_option( 'test_server_api_key' ) : $this->get_option( 'live_server_api_key' );
-		$this->client_api_key = $this->testmode ? $this->get_option( 'test_client_api_key' ) : $this->get_option( 'live_client_api_key' );
-		$this->webhook_secret = $this->get_option( 'webhook_secret' );
+		$this->title              = $this->get_option( 'title' );
+		$this->description        = $this->get_option( 'description' );
+		$this->enabled            = $this->get_option( 'enabled' );
+		$this->testmode           = ( 'yes' === $this->get_option( 'testmode' ) );
+		$this->integration_method = $this->get_option( 'integration_method', 'hosted_fields' );
+		$this->server_api_key     = $this->testmode ? $this->get_option( 'test_server_api_key' ) : $this->get_option( 'live_server_api_key' );
+		$this->client_api_key     = $this->testmode ? $this->get_option( 'test_client_api_key' ) : $this->get_option( 'live_client_api_key' );
+		$this->webhook_secret     = $this->get_option( 'webhook_secret' );
+
+		// Set has_fields based on integration method
+		$this->has_fields = ( 'hosted_fields' === $this->integration_method );
 
 		$this->api_endpoint = $this->testmode ? 'https://sandbox.comcarde.com/v1' : 'https://secure.comcarde.com/v1';
 
@@ -81,6 +92,9 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 		add_action( 'wp_enqueue_scripts', array( $this, 'payment_scripts' ) );
 		add_action( 'woocommerce_thankyou_' . $this->id, array( $this, 'thankyou_page' ) );
 		add_action( 'woocommerce_receipt_' . $this->id, array( $this, 'receipt_page' ) );
+
+		// Add return handler for hosted payment page
+		add_action( 'woocommerce_api_' . strtolower( get_class( $this ) ), array( $this, 'handle_return' ) );
 	}
 
 	/**
@@ -110,6 +124,17 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 				'default'     => __( 'Pay securely using your credit/debit card or digital wallet.', 'wc-brdge-gateway' ),
 				'desc_tip'    => true,
 			),
+			'integration_method'  => array(
+				'title'       => __( 'Integration Method', 'wc-brdge-gateway' ),
+				'type'        => 'select',
+				'description' => __( 'Choose how customers will enter their payment details.', 'wc-brdge-gateway' ),
+				'default'     => 'hosted_fields',
+				'options'     => array(
+					'hosted_fields' => __( 'Hosted Fields (Inline)', 'wc-brdge-gateway' ),
+					'hosted_page'   => __( 'Hosted Payment Page (Redirect)', 'wc-brdge-gateway' ),
+				),
+				'desc_tip'    => true,
+			),
 			'testmode'            => array(
 				'title'       => __( 'Test mode', 'wc-brdge-gateway' ),
 				'label'       => __( 'Enable Test Mode', 'wc-brdge-gateway' ),
@@ -128,7 +153,7 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 			'test_client_api_key' => array(
 				'title'       => __( 'Test Client API Key', 'wc-brdge-gateway' ),
 				'type'        => 'password',
-				'description' => __( 'Get your API keys from your BR-DGE account.', 'wc-brdge-gateway' ),
+				'description' => __( 'Get your API keys from your BR-DGE account. Required for hosted fields integration.', 'wc-brdge-gateway' ),
 				'default'     => '',
 				'desc_tip'    => true,
 			),
@@ -142,7 +167,7 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 			'live_client_api_key' => array(
 				'title'       => __( 'Live Client API Key', 'wc-brdge-gateway' ),
 				'type'        => 'password',
-				'description' => __( 'Get your API keys from your BR-DGE account.', 'wc-brdge-gateway' ),
+				'description' => __( 'Get your API keys from your BR-DGE account. Required for hosted fields integration.', 'wc-brdge-gateway' ),
 				'default'     => '',
 				'desc_tip'    => true,
 			),
@@ -166,8 +191,12 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 			is_admin()
 			|| ( ! is_cart() && ! is_checkout() )
 			|| 'no' === $this->enabled
-			|| empty( $this->client_api_key )
 		) {
+			return;
+		}
+
+		// Only load scripts for hosted fields integration
+		if ( 'hosted_fields' === $this->integration_method && empty( $this->client_api_key ) ) {
 			return;
 		}
 
@@ -178,29 +207,32 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 			WC_BRDGE_VERSION
 		);
 
-		$sdk_url = $this->testmode
-			? 'https://sandbox-assets.comcarde.com/web/v2/js/comcarde.min.js'
-			: 'https://assets.comcarde.com/web/v2/js/comcarde.min.js';
+		// Only load SDK and checkout scripts for hosted fields
+		if ( 'hosted_fields' === $this->integration_method ) {
+			$sdk_url = $this->testmode
+				? 'https://sandbox-assets.comcarde.com/web/v2/js/comcarde.min.js'
+				: 'https://assets.comcarde.com/web/v2/js/comcarde.min.js';
 
-		wp_enqueue_script( 'brdge-sdk', $sdk_url, array(), WC_BRDGE_VERSION, true );
-		wp_enqueue_script(
-			'wc-brdge-gateway',
-			WC_BRDGE_PLUGIN_URL . 'assets/js/checkout.js',
-			array( 'jquery', 'brdge-sdk' ),
-			WC_BRDGE_VERSION,
-			true
-		);
+			wp_enqueue_script( 'brdge-sdk', $sdk_url, array(), WC_BRDGE_VERSION, true );
+			wp_enqueue_script(
+				'wc-brdge-gateway',
+				WC_BRDGE_PLUGIN_URL . 'assets/js/checkout.js',
+				array( 'jquery', 'brdge-sdk' ),
+				WC_BRDGE_VERSION,
+				true
+			);
 
-		wp_localize_script(
-			'wc-brdge-gateway',
-			'wc_brdge_params',
-			array(
-				'client_api_key' => $this->client_api_key,
-				'testmode'       => $this->testmode,
-				'ajax_url'       => admin_url( 'admin-ajax.php' ),
-				'nonce'          => wp_create_nonce( 'wc_brdge_nonce' ),
-			)
-		);
+			wp_localize_script(
+				'wc-brdge-gateway',
+				'wc_brdge_params',
+				array(
+					'client_api_key' => $this->client_api_key,
+					'testmode'       => $this->testmode,
+					'ajax_url'       => admin_url( 'admin-ajax.php' ),
+					'nonce'          => wp_create_nonce( 'wc_brdge_nonce' ),
+				)
+			);
+		}
 	}
 
 	/**
@@ -213,10 +245,17 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 			echo wp_kses_post( wpautop( $this->description ) );
 		}
 
-		echo '<div id="brdge-card-element" style="margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px;"></div>';
-		echo '<div id="brdge-card-errors" style="color: #e74c3c; margin-top: 10px;"></div>';
-		echo '<input type="hidden" id="brdge-payment-token" name="brdge_payment_token" />';
-		wp_nonce_field( 'wc_brdge_process_payment', 'wc_brdge_nonce' );
+		if ( 'hosted_fields' === $this->integration_method ) {
+			// Hosted fields integration - payment form rendered by JavaScript
+			echo '<div id="brdge-card-element" style="margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px;"></div>';
+			echo '<div id="brdge-card-errors" style="color: #e74c3c; margin-top: 10px;"></div>';
+			echo '<input type="hidden" id="brdge-payment-token" name="brdge_payment_token" />';
+			wp_nonce_field( 'wc_brdge_process_payment', 'wc_brdge_nonce' );
+		} else {
+			// Hosted payment page - simple message
+			echo '<p>' . esc_html__( 'You will be redirected to our secure payment page to complete your payment.', 'wc-brdge-gateway' ) . '</p>';
+			wp_nonce_field( 'wc_brdge_process_payment', 'wc_brdge_nonce' );
+		}
 	}
 
 	/**
@@ -232,7 +271,8 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 			return false;
 		}
 
-		if ( empty( $_POST['brdge_payment_token'] ) ) {
+		// Only validate payment token for hosted fields
+		if ( 'hosted_fields' === $this->integration_method && empty( $_POST['brdge_payment_token'] ) ) {
 			wc_add_notice(
 				__( 'Payment error: Please make sure your card details have been entered correctly and that your browser supports JavaScript.', 'wc-brdge-gateway' ),
 				'error'
@@ -242,6 +282,7 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 
 		return true;
 	}
+
 	/**
 	 * Process the payment.
 	 *
@@ -260,12 +301,27 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 
 		$order = wc_get_order( $order_id );
 
+		if ( 'hosted_fields' === $this->integration_method ) {
+			return $this->process_hosted_fields_payment( $order );
+		} else {
+			return $this->process_hosted_page_payment( $order );
+		}
+	}
+
+	/**
+	 * Process payment using hosted fields (existing method).
+	 *
+	 * @param WC_Order $order WooCommerce order.
+	 * @return array|void
+	 */
+	private function process_hosted_fields_payment( $order ) {
 		if ( isset( $_POST['brdge_payment_token'] ) ) {
 			$payment_token = sanitize_text_field( wp_unslash( $_POST['brdge_payment_token'] ) );
 		} else {
 			wc_add_notice( __( 'Payment error: Missing payment token.', 'wc-brdge-gateway' ), 'error' );
 			return;
 		}
+
 		$payment_data = array(
 			'amount'            => array(
 				'value'    => intval( $order->get_total() * 100 ),
@@ -287,7 +343,7 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 				'phone'     => $order->get_billing_phone(),
 			),
 			'metadata'          => array(
-				'order_id'    => $order_id,
+				'order_id'    => $order->get_id(),
 				'order_key'   => $order->get_order_key(),
 				'woocommerce' => true,
 			),
@@ -309,6 +365,146 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 			return;
 		}
 
+		return $this->handle_payment_response( $order, $payment_response );
+	}
+
+	/**
+	 * Process payment using hosted payment page.
+	 *
+	 * @param WC_Order $order WooCommerce order.
+	 * @return array|void
+	 */
+	private function process_hosted_page_payment( $order ) {
+		$return_url = WC()->api_request_url( get_class( $this ) );
+		$return_url = add_query_arg( array(
+			'order_id'  => $order->get_id(),
+			'order_key' => $order->get_order_key(),
+		), $return_url );
+
+		$checkout_data = array(
+			'amount'            => array(
+				'value'    => intval( $order->get_total() * 100 ),
+				'currency' => $order->get_currency(),
+			),
+			'reference'         => $order->get_order_number(),
+			// Translators: order number, site name.
+			'description'       => sprintf( __( 'Order %1$s from %2$s', 'wc-brdge-gateway' ), $order->get_order_number(), get_bloginfo( 'name' ) ),
+			'billingAddress'    => $this->get_billing_address( $order ),
+			'shippingAddress'   => $this->get_shipping_address( $order ),
+			'customer'          => array(
+				'email'     => $order->get_billing_email(),
+				'firstName' => $order->get_billing_first_name(),
+				'lastName'  => $order->get_billing_last_name(),
+				'phone'     => $order->get_billing_phone(),
+			),
+			'returnUrl'         => $return_url,
+			'cancelUrl'         => $order->get_cancel_order_url(),
+			'metadata'          => array(
+				'order_id'           => $order->get_id(),
+				'order_key'          => $order->get_order_key(),
+				'woocommerce'        => true,
+				'integration_method' => 'hosted_page',
+			),
+		);
+
+		$response = $this->make_api_request( 'checkouts', $checkout_data, 'POST' );
+
+		if ( is_wp_error( $response ) ) {
+			$this->log( 'Checkout creation failed with error: ' . $response->get_error_message(), 'error' );
+			wc_add_notice( __( 'Payment error: ', 'wc-brdge-gateway' ) . $response->get_error_message(), 'error' );
+			return;
+		}
+
+		$checkout_response = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( 201 !== wp_remote_retrieve_response_code( $response ) ) {
+			$error_message = $checkout_response['message'] ?? __( 'Checkout creation failed', 'wc-brdge-gateway' );
+			wc_add_notice( __( 'Payment error: ', 'wc-brdge-gateway' ) . $error_message, 'error' );
+			return;
+		}
+
+		if ( isset( $checkout_response['id'] ) && isset( $checkout_response['redirectUrl'] ) ) {
+			// Store checkout ID for later reference
+			$order->update_meta_data( '_brdge_checkout_id', $checkout_response['id'] );
+			$order->update_status( 'pending', __( 'Awaiting BR-DGE payment.', 'wc-brdge-gateway' ) );
+			$order->save();
+
+			$this->log( "Redirecting to hosted payment page for order ID: " . $order->get_id() );
+
+			return array(
+				'result'   => 'success',
+				'redirect' => $checkout_response['redirectUrl'],
+			);
+		}
+
+		wc_add_notice( __( 'Payment setup failed. Please try again.', 'wc-brdge-gateway' ), 'error' );
+	}
+
+	/**
+	 * Handle return from hosted payment page.
+	 *
+	 * @return void
+	 */
+	public function handle_return() {
+		$order_id  = isset( $_GET['order_id'] ) ? intval( $_GET['order_id'] ) : 0;
+		$order_key = isset( $_GET['order_key'] ) ? sanitize_text_field( wp_unslash( $_GET['order_key'] ) ) : '';
+
+		if ( ! $order_id || ! $order_key ) {
+			wp_die( esc_html__( 'Invalid return parameters.', 'wc-brdge-gateway' ) );
+		}
+
+		$order = wc_get_order( $order_id );
+
+		if ( ! $order || ! hash_equals( $order->get_order_key(), $order_key ) ) {
+			wp_die( esc_html__( 'Invalid order.', 'wc-brdge-gateway' ) );
+		}
+
+		$checkout_id = $order->get_meta( '_brdge_checkout_id' );
+
+		if ( ! $checkout_id ) {
+			wp_die( esc_html__( 'Checkout session not found.', 'wc-brdge-gateway' ) );
+		}
+
+		// Get checkout status from BR-DGE
+		$response = $this->make_api_request( "checkouts/$checkout_id", array(), 'GET' );
+
+		if ( is_wp_error( $response ) ) {
+			$this->log( 'Failed to retrieve checkout status: ' . $response->get_error_message(), 'error' );
+			wp_safe_redirect( $order->get_cancel_order_url() );
+			exit;
+		}
+
+		$checkout_response = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( 200 !== wp_remote_retrieve_response_code( $response ) ) {
+			$this->log( 'Checkout status retrieval failed', 'error' );
+			wp_safe_redirect( $order->get_cancel_order_url() );
+			exit;
+		}
+
+		// Handle payment status
+		if ( isset( $checkout_response['payments'] ) && ! empty( $checkout_response['payments'] ) ) {
+			$payment = $checkout_response['payments'][0]; // Get the first payment
+			$this->handle_payment_response( $order, $payment );
+		}
+
+		// Redirect based on order status
+		if ( $order->has_status( array( 'processing', 'completed' ) ) ) {
+			wp_safe_redirect( $this->get_return_url( $order ) );
+		} else {
+			wp_safe_redirect( $order->get_cancel_order_url() );
+		}
+		exit;
+	}
+
+	/**
+	 * Handle payment response (shared between hosted fields and hosted page).
+	 *
+	 * @param WC_Order $order           WooCommerce order.
+	 * @param array    $payment_response Payment response data.
+	 * @return array|void
+	 */
+	private function handle_payment_response( $order, $payment_response ) {
 		if ( isset( $payment_response['id'] ) ) {
 			$order->update_meta_data( '_brdge_payment_id', $payment_response['id'] );
 		}
@@ -334,6 +530,12 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 					}
 					break;
 
+				case 'FAILED':
+				case 'CANCELLED':
+					// Translators: Payment ID.
+					$order->update_status( 'failed', sprintf( __( 'BR-DGE payment failed. Payment ID: %s', 'wc-brdge-gateway' ), $payment_response['id'] ) );
+					break;
+
 				default:
 					wc_add_notice( __( 'Payment status unknown. Please contact support.', 'wc-brdge-gateway' ), 'error' );
 					return;
@@ -342,12 +544,15 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 
 		$order->save();
 
-		$this->log( "Payment processing completed for order ID: $order_id with status: " . $payment_response['status'] );
+		$this->log( "Payment processing completed for order ID: " . $order->get_id() . " with status: " . $payment_response['status'] );
 
-		return array(
-			'result'   => 'success',
-			'redirect' => $this->get_return_url( $order ),
-		);
+		// Only return redirect for hosted fields - hosted page handles its own redirects
+		if ( 'hosted_fields' === $this->integration_method ) {
+			return array(
+				'result'   => 'success',
+				'redirect' => $this->get_return_url( $order ),
+			);
+		}
 	}
 
 	/**
@@ -534,7 +739,9 @@ class WC_BRDge_Gateway extends WC_Payment_Gateway {
 			}
 		}
 
-		echo '<p>' . esc_html__( 'Thank you for your order, please click the button below to pay with BR-DGE.', 'wc-brdge-gateway' ) . '</p>';
+		if ( 'hosted_page' === $this->integration_method ) {
+			echo '<p>' . esc_html__( 'Thank you for your order, please click the button below to pay with BR-DGE.', 'wc-brdge-gateway' ) . '</p>';
+		}
 	}
 
 	/**

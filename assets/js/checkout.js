@@ -12,6 +12,12 @@ jQuery(document).ready(function($) {
         return;
     }
 
+    // Check if this is hosted fields integration
+    if (!wc_brdge_params.client_api_key) {
+        // This is likely hosted payment page integration, no SDK needed
+        return;
+    }
+
     let comcardeClient = null;
     let hostedFields = null;
     let isFormValid = false;
@@ -142,10 +148,11 @@ jQuery(document).ready(function($) {
         const checkoutButton = $('#place_order');
 
         if ($('input[name="payment_method"]:checked').val() === 'brdge') {
-            if (isFormValid) {
-                checkoutButton.prop('disabled', false);
-            } else {
+            // Only disable button if we have hosted fields and they're invalid
+            if (hostedFields && !isFormValid) {
                 checkoutButton.prop('disabled', true);
+            } else {
+                checkoutButton.prop('disabled', false);
             }
         }
     }
@@ -218,15 +225,23 @@ jQuery(document).ready(function($) {
         cardElement.html(fieldsHTML);
     }
 
+    // Check if the current payment method selection has hosted fields
+    function hasHostedFields() {
+        return $('#brdge-card-element').length > 0 && $('#brdge-card-element').children().length > 0;
+    }
+
     // Handle payment method change
     $(document).on('change', 'input[name="payment_method"]', function() {
         if ($(this).val() === 'brdge') {
-            createHostedFieldsHTML();
+            // Check if this gateway instance uses hosted fields
+            if ($('#brdge-card-element').length > 0) {
+                createHostedFieldsHTML();
 
-            // Initialize BR-DGE with a small delay to ensure DOM is ready
-            setTimeout(function() {
-                initializeBRDGE();
-            }, 100);
+                // Initialize BR-DGE with a small delay to ensure DOM is ready
+                setTimeout(function() {
+                    initializeBRDGE();
+                }, 100);
+            }
         } else {
             // Clean up BR-DGE instances
             if (hostedFields) {
@@ -241,6 +256,11 @@ jQuery(document).ready(function($) {
     // Handle form submission.
     $(document).on('submit', 'form.woocommerce-checkout', function(e) {
         if ($('input[name="payment_method"]:checked').val() !== 'brdge') {
+            return true;
+        }
+
+        // If this is hosted page integration (no hosted fields), proceed normally
+        if (!hasHostedFields()) {
             return true;
         }
 
@@ -281,20 +301,24 @@ jQuery(document).ready(function($) {
 
     // Handle checkout form updates.
     $(document.body).on('updated_checkout', function() {
-        // Reinitialize if BR-DGE is selected
+        // Reinitialize if BR-DGE is selected and has hosted fields
         if ($('input[name="payment_method"]:checked').val() === 'brdge') {
+            if ($('#brdge-card-element').length > 0) {
+                createHostedFieldsHTML();
+                setTimeout(function() {
+                    initializeBRDGE();
+                }, 100);
+            }
+        }
+    });
+
+    // Initialize on page load if BR-DGE is preselected and has hosted fields.
+    if ($('input[name="payment_method"][value="brdge"]').is(':checked')) {
+        if ($('#brdge-card-element').length > 0) {
             createHostedFieldsHTML();
             setTimeout(function() {
                 initializeBRDGE();
             }, 100);
         }
-    });
-
-    // Initialize on page load if BR-DGE is preselected.
-    if ($('input[name="payment_method"][value="brdge"]').is(':checked')) {
-        createHostedFieldsHTML();
-        setTimeout(function() {
-            initializeBRDGE();
-        }, 100);
     }
 });

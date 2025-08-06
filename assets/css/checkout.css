@@ -1,0 +1,148 @@
+#brdge-card-element {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 20px;
+  margin: 15px 0;
+}
+
+.brdge-field-container {
+  margin-bottom: 15px;
+}
+.brdge-field-container:last-child {
+  margin-bottom: 0;
+}
+.brdge-field-container label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 5px;
+  color: #333;
+  font-size: 14px;
+}
+
+.brdge-field {
+  position: relative;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 12px;
+  background: #fff;
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+  min-height: 20px;
+}
+.brdge-field:focus-within, .brdge-field.focused {
+  border-color: #007cba;
+  box-shadow: 0 0 0 1px #007cba;
+  outline: none;
+}
+.brdge-field.invalid {
+  border-color: #e74c3c;
+  box-shadow: 0 0 0 1px #e74c3c;
+}
+
+#brdge-card-number-container {
+  display: flex;
+  align-items: center;
+}
+
+#brdge-card-number {
+  flex: 1;
+}
+
+.brdge-card-icon {
+  width: 32px;
+  height: 20px;
+  margin-left: 10px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.6;
+}
+.brdge-card-icon.brdge-card-visa {
+  background-image: url("data:image/svg+xml,...");
+}
+.brdge-card-icon.brdge-card-mastercard {
+  background-image: url("data:image/svg+xml,...");
+}
+.brdge-card-icon.brdge-card-amex {
+  background-image: url("data:image/svg+xml,...");
+}
+
+.brdge-field-row {
+  display: flex;
+  gap: 15px;
+}
+
+.brdge-field-half {
+  flex: 1;
+}
+
+#brdge-card-errors {
+  margin-top: 15px;
+}
+#brdge-card-errors .woocommerce-error {
+  background: #e74c3c;
+  color: #fff;
+  padding: 10px;
+  border-radius: 4px;
+  margin: 0;
+}
+
+.brdge-loading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+@media (max-width: 768px) {
+  .brdge-field-row {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .brdge-field-half {
+    flex: none;
+  }
+  #brdge-card-element {
+    padding: 15px;
+  }
+}
+@media (prefers-contrast: high) {
+  .brdge-field {
+    border-width: 2px;
+  }
+  .brdge-field:focus-within, .brdge-field.focused {
+    border-color: #000;
+    box-shadow: none;
+  }
+  .brdge-field.invalid {
+    border-color: #d00;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brdge-field {
+    transition: none;
+  }
+}
+@media print {
+  #brdge-card-element {
+    display: none;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  #brdge-card-element {
+    background: #2a2a2a;
+    border-color: #555;
+  }
+  .brdge-field {
+    background: #333;
+    border-color: #555;
+    color: #fff;
+  }
+  .brdge-field:focus-within, .brdge-field.focused {
+    border-color: #007cba;
+    box-shadow: 0 0 0 1px #007cba;
+  }
+  .brdge-field-container label {
+    color: #fff;
+  }
+}
+
+/*# sourceMappingURL=checkout.css.map */
